@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.log
+
+# eccodes build trees and the vendored source checkout (large, environment-specific)
+build/
+eccodes_build/
+eccodes_install/
+src/
+
+# downloaded by install_icon_definitions.py
+icon_definitions/

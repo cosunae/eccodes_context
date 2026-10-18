@@ -69,6 +69,28 @@ cmake -C build
 ```
 
 
+# Install the ICON definitions
+
+`test_module.py` needs a local copy of DWD's ICON eccodes definitions to
+exercise the context switch against. Fetch them with:
+
+```
+python3 install_icon_definitions.py
+```
+
+This downloads the latest `eccodes_definitions.edzw-*` archive listed at
+https://opendata.dwd.de/weather/lib/grib/ and extracts it into
+`./icon_definitions`. Useful options:
+
+```
+python3 install_icon_definitions.py --list              # show available versions
+python3 install_icon_definitions.py --archive eccodes_definitions.edzw-2.47.0-2.tar.bz2
+python3 install_icon_definitions.py --dest /some/other/dir
+```
+
+If the definitions were installed to a non-default location, point
+`test_module.py` at it with `ICON_DEFINITIONS_DIR=/some/other/dir`.
+
 # Run the test
 ```
 /usr/bin/uenv run --view=rea-l-ch1 fdb/5.21:v2 -- bash -c '
@@ -76,5 +98,18 @@ export ECCODES_CONTEXT_SWITCH_LIB_PATH=<build_dir>/build/lib/libeccodes.so
 python3 test_module.py
 ```
 
+The test decodes `examples/sample_qv.grib2` (a single GRIB2 message checked
+into this repo) once under the ICON definitions and once under the stock
+eccodes definitions, confirming the two regimes produce different `paramId`s
+and that switching back and forth repeatedly is safe. Results are logged to
+both stdout and `module_test_results.log`.
+
 See test_module.py for a low-level example. 
 Full implementation will require a python API that wraps the low-level functions in python.
+
+# Reset the context or multiple contexts
+
+Once we reset the context, loading/decoding the next message is again expensive since the whole set of definitions need to be loaded in memory.
+A different approach that allows two context to coexists and use in memory would solve this issue. 
+See RESET_CONTEXT_OR_MULTIPLE_CONTEXT.md for details. 
+The eccodes API does not exists for that use-case.

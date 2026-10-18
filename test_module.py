@@ -1,47 +1,80 @@
+import glob
+import logging
 import os
-import sys
+from pathlib import Path
 
-_RESULTS_FILE = "/scratch/mch/cosuna/runml-tmp-test/eccodes_context/module_test_results.log"
+REPO_ROOT = Path(__file__).resolve().parent
+RESULTS_FILE = REPO_ROOT / "module_test_results.log"
+SAMPLE_GRIB = REPO_ROOT / "examples" / "sample_qv.grib2"
+ICON_DEFINITIONS_DIR = Path(os.environ.get("ICON_DEFINITIONS_DIR", REPO_ROOT / "icon_definitions"))
 
-
-def log(*a):
-    line = " ".join(str(x) for x in a)
-    print(line, flush=True)
-    with open(_RESULTS_FILE, "a") as f:
-        f.write(line + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-
-
-sys.path.insert(0, "/scratch/mch/cosuna/runml-tmp-test/eccodes_context")
-
-STOCK_DEFS = "/user-environment/linux-zen3/eccodes-2.47.3-5evbf6pb6kwkq44g7ynlmq6askpeosup/share/eccodes/definitions"
-ICON_DEFS = (
-    "/scratch/mch/cosuna/runml/eccodes-cosmo-mars/definitions:"
-    "/user-environment/venvs/fdb/share/eccodes-cosmo-resources/definitions:"
-    f"{STOCK_DEFS}"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler(RESULTS_FILE)],
 )
+log = logging.getLogger("test_module")
 
 import eccodes_context_switch as ecs
 import eccodes
 
-log("loaded eccodes_context_switch, using libeccodes:", ecs._LIB_PATH)
+log.info("loaded eccodes_context_switch, using libeccodes: %s", ecs._LIB_PATH)
 
-log("--- ensure_patched_eccodes() self-test ---")
+
+def _find_stock_definitions() -> str:
+    """Locate a real, on-disk eccodes definitions directory (containing
+    boot.def). The custom-built libeccodes.so used here has no definitions
+    baked in (ENABLE_MEMFS=OFF), so it needs an actual directory -- unlike
+    the uenv-provided eccodes python package, whose bundled defaults may
+    reference a virtual MEMFS path that only that package's own library
+    knows how to resolve."""
+    env_override = os.environ.get("ECCODES_STOCK_DEFINITIONS_DIR")
+    if env_override:
+        return env_override
+
+    for candidate in eccodes.codes_definition_path().split(":"):
+        if os.path.isfile(os.path.join(candidate, "boot.def")):
+            return candidate
+
+    for pattern in ("/user-environment/*/eccodes-*/share/eccodes/definitions",):
+        for candidate in sorted(glob.glob(pattern)):
+            if os.path.isfile(os.path.join(candidate, "boot.def")):
+                return candidate
+
+    raise RuntimeError(
+        "could not locate a real eccodes definitions directory (with boot.def); "
+        "set ECCODES_STOCK_DEFINITIONS_DIR explicitly"
+    )
+
+
+STOCK_DEFS = _find_stock_definitions()
+
+
+def _find_icon_definitions() -> str:
+    candidates = sorted(ICON_DEFINITIONS_DIR.glob("definitions.edzw-*"))
+    if not candidates:
+        raise RuntimeError(
+            f"no ICON definitions found under {ICON_DEFINITIONS_DIR}; "
+            "run `python3 install_icon_definitions.py` first (see README.md)"
+        )
+    return str(candidates[-1])
+
+
+ICON_DEFS = f"{_find_icon_definitions()}:{STOCK_DEFS}"
+
+log.info("--- ensure_patched_eccodes() self-test ---")
 try:
     ecs.ensure_patched_eccodes(STOCK_DEFS)
-    log("PASSED: this eccodes build appears to have the fix")
+    log.info("PASSED: this eccodes build appears to have the fix")
     PATCHED = True
 except RuntimeError as e:
-    log("FAILED (as expected if unpatched):", str(e)[:200])
+    log.info("FAILED (as expected if unpatched): %s", str(e)[:200])
     PATCHED = False
 
 if PATCHED:
-    log()
-    log("--- exercising definitions_path() context manager ---")
+    log.info("--- exercising definitions_path() context manager ---")
 
-    path = "/scratch/mch/cosuna/varda-single/run/202610141800/outputs/interpolator/varda-single-global_202610141800_8.grib"
-    with open(path, "rb") as f:
+    with open(SAMPLE_GRIB, "rb") as f:
         while True:
             gid = eccodes.codes_grib_new_from_file(f)
             if gid is None:
@@ -64,19 +97,17 @@ if PATCHED:
         return val.value
 
     with ecs.definitions_path(ICON_DEFS):
-        log("inside ICON definitions_path():", decode(raw))
+        log.info("inside ICON definitions_path(): %s", decode(raw))
 
     with ecs.definitions_path(STOCK_DEFS):
-        log("inside STOCK definitions_path():", decode(raw))
+        log.info("inside STOCK definitions_path(): %s", decode(raw))
 
     with ecs.definitions_path(ICON_DEFS):
-        log("inside ICON definitions_path() again:", decode(raw))
+        log.info("inside ICON definitions_path() again: %s", decode(raw))
 
     with ecs.definitions_path(STOCK_DEFS):
-        log("inside STOCK definitions_path() again:", decode(raw))
+        log.info("inside STOCK definitions_path() again: %s", decode(raw))
 
-    log()
-    log("=== module test completed successfully ===")
+    log.info("=== module test completed successfully ===")
 else:
-    log()
-    log("=== module correctly refused to proceed on unpatched eccodes ===")
+    log.info("=== module correctly refused to proceed on unpatched eccodes ===")
